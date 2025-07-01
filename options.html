@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Configuração - Session Tracker</title>
+    <style>
+      body { font-family: sans-serif; padding: 16px; }
+      label { display: block; margin-top: 8px; }
+      input { width: 100%; padding: 4px; margin-bottom: 8px; }
+      button { padding: 6px 12px; }
+    </style>
+  </head>
+  <body>
+    <h2>Configuração</h2>
+    <label>URL do Webhook (n8n):
+      <input type="text" id="apiUrl" placeholder="https://seu.n8n.app/webhook/..." />
+    </label>
+    <label>Nome do Responsável:
+      <input type="text" id="responsavel" placeholder="Ex: Camila" />
+    </label>
+    <button id="saveBtn">Salvar</button>
+    <p id="status"></p>
+
+    <script src="options.js"></script>
+  </body>
+</html>

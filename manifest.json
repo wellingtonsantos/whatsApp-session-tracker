@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "WhatsApp Session Tracker",
+  "version": "1.0",
+  "description": "Rastreia sessões do WhatsApp e envia dados de tempo da seção para uma API.",
+  "permissions": ["storage"],
+  "host_permissions": ["https://web.whatsapp.com/*"],
+  "action": {
+    "default_title": "Configurar",
+    "default_popup": "options.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://web.whatsapp.com/*"],
+      "js": ["content.js"]
+    }
+  ],
+  "icons": {
+    "48": "icon.png"
+  }
+}

@@ -1,10 +1,8 @@
-let sessionTimeout = null;
+let sessionTimeouts = {}; // Múltiplos timeouts por contato
 let config = {
   apiUrl: null,
-  responsavel: "Desconhecido"
+  responsavel: "Desconhecido",
 };
-
-const STORAGE_KEY = "whatsapp_session_data";
 
 function getNow() {
   return Date.now();
@@ -17,26 +15,61 @@ function getDateFormated(data) {
   return `${dia}/${mes}/${ano}`;
 }
 
-function loadSession() {
-  const data = localStorage.getItem(STORAGE_KEY);
+function getSessionKey(contactName) {
+  return `whatsapp_session_data_${contactName}`;
+}
+
+function loadSession(contactName) {
+  const key = getSessionKey(contactName);
+  const data = localStorage.getItem(key);
   return data ? JSON.parse(data) : null;
 }
 
-function saveSession(session) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(session));
+function saveSession(contactName, session) {
+  const key = getSessionKey(contactName);
+  localStorage.setItem(key, JSON.stringify(session));
 }
 
-function clearSession() {
-  localStorage.removeItem(STORAGE_KEY);
-  let session = loadSession();
-  if (!session) {
-    startOrContinueSession();
+function clearSession(contactName) {
+  const key = getSessionKey(contactName);
+  localStorage.removeItem(key);
+  if (sessionTimeouts[contactName]) {
+    clearTimeout(sessionTimeouts[contactName]);
+    delete sessionTimeouts[contactName];
   }
 }
 
-function startOrContinueSession() {
+function getActiveChatName() {
+  const header = document.querySelector("header");
+  if (!header) return "Desconhecido";
+
+  const nameEl = header.querySelector("span._ao3e:not(img)");
+  if (nameEl && nameEl.innerText.trim()) {
+    return nameEl.innerText.trim();
+  }
+
+  return "Desconhecido";
+}
+
+function updateTotalBadge() {
+  let total = 0;
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (key.startsWith("whatsapp_session_data_")) {
+      const session = JSON.parse(localStorage.getItem(key));
+      total += session.duracao_minutos || 0;
+    }
+  }
+
+  chrome.runtime.sendMessage({
+    type: "update-badge",
+    text: total > 0 ? total.toString() : "",
+  });
+}
+
+function startOrContinueSession(contactName) {
   const now = getNow();
-  let session = loadSession();
+  let session = loadSession(contactName);
 
   if (!session) {
     session = {
@@ -44,10 +77,11 @@ function startOrContinueSession() {
       inicio: now,
       fim: now,
       duracao_minutos: 0,
-      mensagens: 0,
-      responsavel: config.responsavel || "Desconhecido"
+      mensagens: 1,
+      responsavel: config.responsavel,
+      contato: contactName,
     };
-    console.log("🟢 Sessão iniciada", session);
+    console.log(`🟢 Sessão iniciada para ${contactName}`, session);
   } else {
     const start = session.inicio;
     const end = now;
@@ -55,19 +89,23 @@ function startOrContinueSession() {
     session.duracao_minutos = diffMin + 1;
     session.fim = end;
     session.mensagens += 1;
-    console.log("🔁 Sessão atualizada", session);
+    console.log(`🔁 Sessão atualizada para ${contactName}`, session);
   }
 
-  saveSession(session);
+  saveSession(contactName, session);
+  updateTotalBadge();
 
-  if (sessionTimeout) clearTimeout(sessionTimeout);
-  sessionTimeout = setTimeout(() => {
-    endSession(session);
+  if (sessionTimeouts[contactName]) {
+    clearTimeout(sessionTimeouts[contactName]);
+  }
+
+  sessionTimeouts[contactName] = setTimeout(() => {
+    endSession(contactName, session);
   }, 60000);
 }
 
-function endSession(session) {
-  console.log("⛔ Tentando encerrar sessão:", session);
+function endSession(contactName, session) {
+  console.log(`⛔ Tentando encerrar sessão de ${contactName}:`, session);
 
   const isValidSession =
     session &&
@@ -82,20 +120,22 @@ function endSession(session) {
   }
 
   if (isValidSession && config.apiUrl) {
-    console.log("✅ Sessão válida. Enviando ao n8n...");
+    console.log(`✅ Enviando sessão válida de ${contactName} à API...`);
     fetch(config.apiUrl, {
       method: "POST",
       headers: {
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
       },
-      body: JSON.stringify(session)
-    }).catch((err) => console.error("Erro ao enviar sessão:", err));
+      body: JSON.stringify(session),
+    }).catch((err) =>
+      console.error(`Erro ao enviar sessão de ${contactName}:`, err)
+    );
   } else {
-    console.warn("⚠️ Sessão inválida. Dados não enviados.");
+    console.warn(`⚠️ Sessão inválida de ${contactName}. Dados não enviados.`);
   }
 
-  clearSession();
-  sessionTimeout = null;
+  clearSession(contactName);
+  updateTotalBadge();
 }
 
 function extractDateFromMessage(node) {
@@ -124,17 +164,32 @@ const observer = new MutationObserver((mutationsList) => {
           const isOutgoing = node.querySelectorAll(".message-out");
 
           if (isOutgoing && isOutgoing.length > 0) {
-            const session = loadSession();
-            const sessionStart = session?.inicio;
+            const contactName = getActiveChatName();
             const messageDate = extractDateFromMessage(node);
+            const now = getNow();
 
-            if (messageDate && sessionStart) {
-              if (messageDate < sessionStart) {
-                console.log("⏱️ Ignorando mensagem anterior ao início da sessão.");
-                return;
-              }
-              startOrContinueSession();
+            // Se não for possível extrair a data, usa o momento atual
+            const effectiveMessageTime = messageDate || now;
+
+            let session = loadSession(contactName);
+
+            // Cria a sessão se ainda não existir
+            if (!session) {
+              startOrContinueSession(contactName);
+              session = loadSession(contactName);
             }
+
+            const sessionStart = session?.inicio || now;
+
+            if (effectiveMessageTime < sessionStart - 1000) {
+              console.warn(
+                `⏱️ Mensagem anterior ao início da sessão de ${contactName}. Ajustando com getNow().`
+              );
+              startOrContinueSession(contactName);
+              return;
+            }
+
+            startOrContinueSession(contactName);
           }
         }
       });
@@ -147,12 +202,8 @@ function waitForAppAndStart() {
   if (target) {
     observer.observe(target, {
       childList: true,
-      subtree: true
+      subtree: true,
     });
-    let session = loadSession();
-    if (!session) {
-      startOrContinueSession();
-    }
     console.log("✅ Rastreador de sessões ativado!");
   } else {
     setTimeout(waitForAppAndStart, 1000);

@@ -112,14 +112,29 @@ function endSession(contactName, session) {
     session.inicio &&
     session.fim &&
     session.inicio < session.fim &&
-    session.mensagens > 0 &&
-    session.duracao_minutos > 0;
+    session.mensagens > 0;
+
+  if (!isValidSession) {
+    console.warn(`⚠️ Sessão inválida de ${contactName}. Dados não enviados.`);
+    clearSession(contactName);
+    updateTotalBadge();
+    return;
+  }
+
+  const maxAllowedSeconds = session.mensagens * 60;
+  const actualSeconds = Math.floor((session.fim - session.inicio) / 1000);
+
+  if (actualSeconds > maxAllowedSeconds) {
+    console.warn(
+      `⚠️ Sessão de ${contactName} excedeu o limite permitido. Ajustando duração de ${actualSeconds}s para ${maxAllowedSeconds}s.`
+    );
+    session.fim = session.inicio + maxAllowedSeconds * 1000;
+    session.duracao_minutos = Math.ceil(maxAllowedSeconds / 60);
+  }
 
   if (!config.apiUrl) {
     console.warn("❌ API URL não configurada. Sessão não será enviada.");
-  }
-
-  if (isValidSession && config.apiUrl) {
+  } else {
     console.log(`✅ Enviando sessão válida de ${contactName} à API...`);
     fetch(config.apiUrl, {
       method: "POST",
@@ -130,8 +145,6 @@ function endSession(contactName, session) {
     }).catch((err) =>
       console.error(`Erro ao enviar sessão de ${contactName}:`, err)
     );
-  } else {
-    console.warn(`⚠️ Sessão inválida de ${contactName}. Dados não enviados.`);
   }
 
   clearSession(contactName);
